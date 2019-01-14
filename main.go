@@ -75,19 +75,34 @@ func mount(comicDir, mountpoint string) error {
 	return nil
 }
 
+func setLogLvl(s string) error {
+	lvl, err := log.LvlFromString(s)
+	if err != nil {
+		return err
+	}
+
+	log.Root().SetHandler(log.LvlFilterHandler(lvl, log.StdoutHandler))
+	return nil
+}
+
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", progName)
-	fmt.Fprintf(os.Stderr, "  %s comic_dir mountpoint\n", progName)
+	fmt.Fprintf(os.Stderr, "  %s [options] comic_dir mountpoint\n", progName)
 	flag.PrintDefaults()
 }
 
 func main() {
 	flag.Usage = usage
+	logLevel := flag.String("log-level", "info", "displays all logs at or above this level")
 	flag.Parse()
 
 	if flag.NArg() != 2 {
 		usage()
 		os.Exit(2)
+	}
+
+	if err := setLogLvl(*logLevel); err != nil {
+		panic(err)
 	}
 
 	comicDir := flag.Arg(0)
