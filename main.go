@@ -11,17 +11,9 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	//_ "bazil.org/fuse/fs/fstestutil"
 )
 
-var progName = filepath.Base(os.Args[0])
-
-func mount(comicDir, mountpoint string) error {
-	if _, err := os.Stat(comicDir); os.IsNotExist(err) {
-		log.Error("comicdir does not exist", "path", comicDir)
-		return err
-	}
-
+func mount(comicDir, mountpoint string, filesystem fs.FS) error {
 	c, err := fuse.Mount(
 		mountpoint,
 		fuse.FSName("comicfs"),
@@ -32,6 +24,7 @@ func mount(comicDir, mountpoint string) error {
 	if err != nil {
 		return err
 	}
+
 	defer c.Close()
 
 	sigChan := make(chan os.Signal)
@@ -49,20 +42,7 @@ func mount(comicDir, mountpoint string) error {
 		}
 	}()
 
-	ct := make(map[string]struct{})
-	ct[".cbz"] = struct{}{}
-	ct[".zip"] = struct{}{}
-
-	filesys := &FS{
-		ComicDir:   comicDir,
-		ComicTypes: ct,
-	}
-
-	if err := filesys.Init(); err != nil {
-		return err
-	}
-
-	if err := fs.Serve(c, filesys); err != nil {
+	if err := fs.Serve(c, filesystem); err != nil {
 		return err
 	}
 
@@ -86,6 +66,7 @@ func setLogLvl(s string) error {
 }
 
 func usage() {
+	progName := filepath.Base(os.Args[0])
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", progName)
 	fmt.Fprintf(os.Stderr, "  %s [options] comic_dir mountpoint\n", progName)
 	flag.PrintDefaults()
@@ -98,7 +79,7 @@ func main() {
 
 	if flag.NArg() != 2 {
 		usage()
-		os.Exit(2)
+		os.Exit(1)
 	}
 
 	if err := setLogLvl(*logLevel); err != nil {
@@ -108,8 +89,27 @@ func main() {
 	comicDir := flag.Arg(0)
 	mountpoint := flag.Arg(1)
 
-	if err := mount(comicDir, mountpoint); err != nil {
+	if _, err := os.Stat(comicDir); os.IsNotExist(err) {
+		log.Error("comicdir does not exist", "path", comicDir)
+		os.Exit(1)
+	}
+
+	ct := make(map[string]struct{})
+	ct[".cbz"] = struct{}{}
+	ct[".zip"] = struct{}{}
+
+	filesys := &FS{
+		ComicDir:   comicDir,
+		ComicTypes: ct,
+	}
+
+	if err := filesys.Init(); err != nil {
+		log.Error("failed to initialize filesystem", "error", err)
+		os.Exit(1)
+	}
+
+	if err := mount(comicDir, mountpoint, filesys); err != nil {
 		log.Error("Failed to mount", "error", err)
-		os.Exit(2)
+		os.Exit(1)
 	}
 }
