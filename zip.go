@@ -17,9 +17,10 @@ import (
 )
 
 type ZipFile struct {
-	path     string
-	archive  *zip.ReadCloser
-	fileInfo os.FileInfo
+	path          string
+	archiveOpened bool
+	archive       *zip.ReadCloser
+	fileInfo      os.FileInfo
 }
 
 func (zf *ZipFile) String() string {
@@ -33,23 +34,35 @@ func (zf *ZipFile) Init() error {
 	}
 	zf.fileInfo = fi
 
+	return nil
+}
+
+func (zf *ZipFile) EnsureArchiveOpen() error {
+	if zf.archiveOpened {
+		return nil
+	}
+
 	archive, err := zip.OpenReader(zf.path)
 	if err != nil {
 		return err
 	}
 
 	zf.archive = archive
+	zf.archiveOpened = true
 	// TODO find a safer way to close archives?
 	runtime.SetFinalizer(zf, ZipFileFinalizer)
 	return nil
 }
 
 func ZipFileFinalizer(zf *ZipFile) {
-	log.Info("Running finalizer for zipfile", "ZipFile", zf)
+	log.Debug("Running finalizer for zipfile", "ZipFile", zf)
 
 	if err := zf.archive.Close(); err != nil {
 		log.Error("Failed to close zipfile archive", "ZipFile", zf, "error", err)
 	}
+
+	zf.archiveOpened = false
+	zf.archive = nil
 }
 
 type ZipDir struct {
@@ -82,6 +95,10 @@ func (z *ZipDir) Attr(ctx context.Context, attr *fuse.Attr) error {
 }
 
 func (z *ZipDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+	if err := z.EnsureArchiveOpen(); err != nil {
+		return nil, err
+	}
+
 	dirents := make([]fuse.Dirent, 0)
 	for _, f := range z.archive.File {
 
@@ -115,6 +132,10 @@ func (z *ZipDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 }
 
 func (z *ZipDir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
+	if err := z.EnsureArchiveOpen(); err != nil {
+		return nil, err
+	}
+
 	path := filepath.Join(z.path, req.Name)
 
 	for _, f := range z.archive.File {
