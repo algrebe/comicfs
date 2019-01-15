@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 	"time"
 
 	"bazil.org/fuse"
@@ -75,6 +77,8 @@ func usage() {
 func main() {
 	flag.Usage = usage
 	logLevel := flag.String("log-level", "info", "displays all logs at or above this level")
+	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to `file`")
+	memprofile := flag.String("memprofile", "", "write memory profile to `file`")
 	flag.Parse()
 
 	if flag.NArg() != 2 {
@@ -108,8 +112,35 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Error("failed to create CPU profile", "error", err)
+			os.Exit(1)
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Error("Failed to start CPU profile", "error", err)
+			os.Exit(1)
+		}
+		defer pprof.StopCPUProfile()
+	}
+
 	if err := mount(comicDir, mountpoint, filesys); err != nil {
 		log.Error("Failed to mount", "error", err)
 		os.Exit(1)
+	}
+
+	if *memprofile != "" {
+		f, err := os.Create(*memprofile)
+		if err != nil {
+			log.Error("Failed to create memory profile", "error", err)
+			os.Exit(1)
+		}
+		runtime.GC() // get up-to-date statistics
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			log.Error("Failed to write memory profile", "error", err)
+			os.Exit(1)
+		}
+		f.Close()
 	}
 }
