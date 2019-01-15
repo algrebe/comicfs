@@ -29,7 +29,7 @@ func (f *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 	}
 
 	attr.Valid = 1 * time.Hour
-	attr.Inode = f.fs.GetInode(f.path)
+	attr.Inode = f.fs.ig.GenerateInode(f.path)
 	attr.Size = uint64(fi.Size())
 	attr.Mode = fi.Mode()
 	attr.Mtime = fi.ModTime()

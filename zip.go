@@ -68,17 +68,7 @@ func ZipFileFinalizer(zf *ZipFile) {
 type ZipDir struct {
 	*ZipFile
 	path string
-	fs   *FS
-}
-
-func MakeZipDir(path string, fs *FS) (*ZipDir, error) {
-	zf := &ZipFile{path: path}
-	if err := zf.Init(); err != nil {
-		log.Error("Failed to initialize zipfile", "path", path, "error", err)
-		return nil, err
-	}
-
-	return &ZipDir{ZipFile: zf, path: "", fs: fs}, nil
+	ig   InodeGenerator
 }
 
 func (z *ZipDir) String() string {
@@ -87,7 +77,7 @@ func (z *ZipDir) String() string {
 
 func (z *ZipDir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Valid = 1 * time.Hour
-	attr.Inode = z.fs.GetInode(z.ZipFile.path + z.path)
+	attr.Inode = z.ig.GenerateInode(z.ZipFile.path + z.path)
 	attr.Size = uint64(z.fileInfo.Size())
 	attr.Mode = os.ModeDir | 0644
 	attr.Mtime = z.fileInfo.ModTime()
@@ -146,7 +136,7 @@ func (z *ZipDir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse
 				ZipFile: z.ZipFile,
 				path:    fpath,
 				file:    f,
-				fs:      z.fs,
+				ig:      z.ig,
 			}
 			return zm, nil
 
@@ -154,7 +144,7 @@ func (z *ZipDir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse
 			zd := &ZipDir{
 				ZipFile: z.ZipFile,
 				path:    f.Name,
-				fs:      z.fs,
+				ig:      z.ig,
 			}
 			return zd, nil
 		}
@@ -167,7 +157,7 @@ func (z *ZipDir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse
 type ZipMember struct {
 	*ZipFile
 	path string
-	fs   *FS
+	ig   InodeGenerator
 	file *zip.File
 	fp   io.ReadCloser
 }
@@ -178,7 +168,7 @@ func (z *ZipMember) String() string {
 
 func (z *ZipMember) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Valid = 1 * time.Hour
-	attr.Inode = z.fs.GetInode(z.path)
+	attr.Inode = z.ig.GenerateInode(z.path)
 	attr.Size = z.file.UncompressedSize64
 	attr.Mode = z.file.Mode()
 	attr.Mtime = z.file.ModTime()
@@ -217,4 +207,14 @@ func (z *ZipMember) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.
 	n, err := z.fp.Read(buf)
 	resp.Data = buf[:n]
 	return err
+}
+
+func ZipHandlerCreator(path string, ig InodeGenerator) (ComicHandler, error) {
+	zf := &ZipFile{path: path}
+	if err := zf.Init(); err != nil {
+		log.Error("Failed to initialize zipfile", "path", path, "error", err)
+		return nil, err
+	}
+
+	return &ZipDir{ZipFile: zf, path: "", ig: ig}, nil
 }

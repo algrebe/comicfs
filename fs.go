@@ -2,44 +2,44 @@ package main
 
 import (
 	"path/filepath"
-	"sync"
 
 	"bazil.org/fuse/fs"
 )
 
-type FS struct {
-	ComicDir      string
-	ComicTypes    map[string]struct{}
-	inodeMap      map[string]uint64
-	inodeMapMutex *sync.Mutex
+type ComicHandler interface {
+	fs.Node
+	fs.HandleReadDirAller
+	fs.NodeRequestLookuper
 }
 
-func (f *FS) Init() error {
-	f.inodeMap = make(map[string]uint64)
-	f.inodeMapMutex = &sync.Mutex{}
-	return nil
+type ComicHandlerCreator func(path string, ig InodeGenerator) (ComicHandler, error)
+
+type FS struct {
+	ComicDir                  string
+	comicTypeToHandlerCreator map[string]ComicHandlerCreator
+	ig                        InodeGenerator
+}
+
+func (f *FS) Init() {
+	f.comicTypeToHandlerCreator = make(map[string]ComicHandlerCreator)
+	sig := &SimpleInodeGenerator{}
+	sig.Init()
+
+	f.ig = sig
 }
 
 func (f *FS) Root() (fs.Node, error) {
 	return &Dir{path: f.ComicDir, fs: f}, nil
 }
 
-func (f *FS) GetInode(path string) uint64 {
-	f.inodeMapMutex.Lock()
-	defer f.inodeMapMutex.Unlock()
-
-	if i, ok := f.inodeMap[path]; ok {
-		return i
-	}
-
-	f.inodeMap[path] = uint64(len(f.inodeMap))
-	return f.inodeMap[path]
+func (f *FS) RegisterComicType(suffix string, chc ComicHandlerCreator) {
+	f.comicTypeToHandlerCreator[suffix] = chc
 }
 
-func (f *FS) IsComic(path string) bool {
+func (f *FS) GetComicHandlerCreator(path string) ComicHandlerCreator {
 	ext := filepath.Ext(path)
-	if _, ok := f.ComicTypes[ext]; ok {
-		return true
+	if chc, ok := f.comicTypeToHandlerCreator[ext]; ok {
+		return chc
 	}
-	return false
+	return nil
 }

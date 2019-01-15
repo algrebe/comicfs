@@ -98,19 +98,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	ct := make(map[string]struct{})
-	ct[".cbz"] = struct{}{}
-	ct[".zip"] = struct{}{}
-
 	filesys := &FS{
-		ComicDir:   comicDir,
-		ComicTypes: ct,
+		ComicDir: comicDir,
 	}
 
-	if err := filesys.Init(); err != nil {
-		log.Error("failed to initialize filesystem", "error", err)
-		os.Exit(1)
-	}
+	filesys.Init()
+
+	filesys.RegisterComicType(".zip", ZipHandlerCreator)
+	filesys.RegisterComicType(".cbz", ZipHandlerCreator)
 
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)

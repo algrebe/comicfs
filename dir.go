@@ -5,7 +5,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"bazil.org/fuse"
@@ -31,7 +30,7 @@ func (d *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	}
 
 	attr.Valid = 1 * time.Hour
-	attr.Inode = d.fs.GetInode(d.path)
+	attr.Inode = d.fs.ig.GenerateInode(d.path)
 	attr.Size = uint64(fi.Size())
 	attr.Mode = fi.Mode()
 	attr.Mtime = fi.ModTime()
@@ -52,8 +51,11 @@ func (d *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		}
 
 		name := f.Name()
-		if ft == fuse.DT_File && strings.HasSuffix(name, ".zip") {
-			ft = fuse.DT_Dir
+		if ft == fuse.DT_File {
+			// If we have a comic handler for this name, then we treat it as a directory
+			if handler := d.fs.GetComicHandlerCreator(name); handler != nil {
+				ft = fuse.DT_Dir
+			}
 		}
 
 		dirent := fuse.Dirent{
@@ -79,18 +81,17 @@ func (d *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.Lo
 		return nil, err
 	}
 
-	// TODO depending on whether its a zip file or not
-
 	if fi.IsDir() {
 		return &Dir{path: path, fs: d.fs}, nil
 	}
 
-	if d.fs.IsComic(path) {
-		zd, err := MakeZipDir(path, d.fs)
+	if chc := d.fs.GetComicHandlerCreator(path); chc != nil {
+		handler, err := chc(path, d.fs.ig)
 		if err != nil {
-			log.Error("Failed to make zip dir", "dir", d, "path", path, "error", err)
+			log.Error("Failed to create handler for comic", "dir", d, "path", path, "error", err)
 		}
-		return zd, err
+
+		return handler, err
 	}
 
 	return &File{path: path, fs: d.fs}, nil
