@@ -18,6 +18,7 @@ type FS struct {
 	ComicDir                  string
 	comicTypeToHandlerCreator map[string]ComicHandlerCreator
 	ig                        InodeGenerator
+	ic                        ImageConverterDetector
 }
 
 func (f *FS) Init() {
@@ -25,7 +26,11 @@ func (f *FS) Init() {
 	sig := &SimpleInodeGenerator{}
 	sig.Init()
 
+	sic := &SimpleImageConverter{}
+	sic.Init()
+
 	f.ig = sig
+	f.ic = sic
 }
 
 func (f *FS) Root() (fs.Node, error) {

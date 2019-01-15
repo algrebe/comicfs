@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -69,6 +70,7 @@ type ZipDir struct {
 	*ZipFile
 	path string
 	ig   InodeGenerator
+	icd  ImageConverterDetector
 }
 
 func (z *ZipDir) String() string {
@@ -121,13 +123,33 @@ func (z *ZipDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	return dirents, nil
 }
 
+func (z *ZipDir) Clone() *ZipDir {
+	zd := &ZipDir{
+		ZipFile: z.ZipFile,
+		path:    z.path,
+		ig:      z.ig,
+		icd:     z.icd,
+	}
+	return zd
+}
+
 func (z *ZipDir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
 	if err := z.EnsureArchiveOpen(); err != nil {
 		return nil, err
 	}
 
-	path := filepath.Join(z.path, req.Name)
+	name := req.Name
+	var imageConverter ImageConverter
 
+	// Lookups might be of the form *.webp.png where only *.webp exists and needs
+	// to be converted to png. The following code cleans up the request name
+	if newName, imgConv := z.icd.Detect(name); imgConv != nil {
+		log.Debug("imgconv detected", "name", name, "conv", imgConv)
+		name = newName
+		imageConverter = imgConv
+	}
+
+	path := filepath.Join(z.path, name)
 	for _, f := range z.archive.File {
 		switch {
 		case f.Name == path:
@@ -137,15 +159,13 @@ func (z *ZipDir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse
 				path:    fpath,
 				file:    f,
 				ig:      z.ig,
+				ic:      imageConverter,
 			}
 			return zm, nil
 
 		case f.Name[:len(f.Name)-1] == path && f.Name[len(f.Name)-1] == '/':
-			zd := &ZipDir{
-				ZipFile: z.ZipFile,
-				path:    f.Name,
-				ig:      z.ig,
-			}
+			zd := z.Clone()
+			z.path = f.Name
 			return zd, nil
 		}
 	}
@@ -158,36 +178,46 @@ type ZipMember struct {
 	*ZipFile
 	path string
 	ig   InodeGenerator
+	ic   ImageConverter
 	file *zip.File
 	fp   io.ReadCloser
+	data []byte
 }
 
 func (z *ZipMember) String() string {
-	return fmt.Sprintf("ZipMember<%s>", z.path)
+	return fmt.Sprintf("ZipMember<%s/%s>", z.ZipFile.path, z.path)
 }
 
 func (z *ZipMember) Attr(ctx context.Context, attr *fuse.Attr) error {
-	attr.Valid = 1 * time.Hour
-	attr.Inode = z.ig.GenerateInode(z.path)
+	attr.Valid = 2 * time.Minute
+	attr.Inode = z.ig.GenerateInode(z.ZipFile.path + z.path)
 	attr.Size = z.file.UncompressedSize64
 	attr.Mode = z.file.Mode()
 	attr.Mtime = z.file.ModTime()
-	return nil
-}
 
-func (z *ZipMember) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 	fp, err := z.file.Open()
 	if err != nil {
 		log.Error("Failed to open zipmember", "ZipMember", z, "error", err)
-		return nil, err
+		return err
 	}
 
-	z.fp = fp
-	return z, nil
-}
+	data, err := ioutil.ReadAll(fp)
+	if err != nil {
+		return err
+	}
 
-func (z *ZipMember) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	if err := z.fp.Close(); err != nil {
+	z.data = data
+	if z.ic != nil {
+		if converted, err := z.ic.Convert(z.data); err != nil {
+			log.Error("Failed to convert image", "ic", z.ic, "error", err)
+		} else {
+			z.data = converted
+		}
+	}
+
+	attr.Size = uint64(len(z.data))
+
+	if err := fp.Close(); err != nil {
 		log.Error("Failed to close fp", "ZipMember", z, "error", err)
 		return err
 	}
@@ -197,16 +227,12 @@ func (z *ZipMember) Release(ctx context.Context, req *fuse.ReleaseRequest) error
 
 func (z *ZipMember) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 	log.Debug("ZipMember.Read", "ZipMember", z, "offset", req.Offset, "size", req.Size)
-	buf := make([]byte, req.Size)
-	// TODO if seeking isn't allowed, then this part is unnecessary
-	if req.Offset != 0 {
-		throwaway := make([]byte, req.Offset)
-		z.fp.Read(throwaway)
+	end := int(req.Offset) + req.Size
+	if len(z.data) < end {
+		end = len(z.data)
 	}
-
-	n, err := z.fp.Read(buf)
-	resp.Data = buf[:n]
-	return err
+	resp.Data = z.data[req.Offset:end]
+	return nil
 }
 
 func ZipHandlerCreator(path string, ig InodeGenerator) (ComicHandler, error) {
@@ -216,5 +242,8 @@ func ZipHandlerCreator(path string, ig InodeGenerator) (ComicHandler, error) {
 		return nil, err
 	}
 
-	return &ZipDir{ZipFile: zf, path: "", ig: ig}, nil
+	icd := &SimpleImageConverter{}
+	icd.Init()
+
+	return &ZipDir{ZipFile: zf, path: "", ig: ig, icd: icd}, nil
 }
