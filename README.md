@@ -7,6 +7,8 @@ I plan on building a comic book server with nginx to serve static content.
 
 The client will construct paths such as /static/some-comic.cbz/01.png that nginx will serve out, unaware that some-comic.cbz is actually a compressed file.
 
+NOTE: while comicfs works on any cbz and zip files, when using with comicui it assumes a certain structure for comics: refer `example_comic_dir`.
+
 ```
 go get github.com/algrebe/comicfs
 
